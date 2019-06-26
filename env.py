@@ -1,28 +1,43 @@
-#%% 载入模组
 from vpython import *
+from vpython.vector import mag, mag2
 import os
 import numpy as np
 
-#%% 定义
+
+INF = 99999999999.0
+
 class Space(object):
-    def __init__(self, display=False):
+    def __init__(self, ):
         # set parameters
         win = 700
-        self.display = display
         self.Natoms = 15
+        self.N_ACTIONS = 27
+
 
         L = 1
         gray = color.gray(0.7)
         self.mass = 1
         self.Ratom = 0.03
+        self.RO = 0.06  #radius of obstructions
         self.level = 0
         self.dist = [0.6, 0.4, 0.2, 0.1, 0.01]
         self.reward = [100, 200, 300, 600, 1000]
         self.init_pos = vector(0.45, 0.45, 0.45)
         self.target_pos = vector(-0.45, -0.45, -0.45)
         self.gameOver = False
+        self.action_dict = {}
+
+        #create action_dict
+        cnt = 0
+        for i = [-1, 0, 1]:
+            for j = [-1, 0, 1]:
+                for k = [-1, 0, 1]:
+                    if (i==0 and j==0 and k==0): continue
+                    action_dict[cnt] = vector(i, j, k)/mag(vector(i, j, k))
+                    cnt += 1
 
         #create canvas
+        #scene = display(visible = False)
         animation = canvas(width = win, height = win)
         animation.range = L
         animation.title = "drone simulation"
@@ -69,19 +84,18 @@ class Space(object):
             # mass.append(m)
 
             pavg = random() * mass
-            theta = pi*random()
-            phi = 2*pi*random()
+            theta = np.pi*random()
+            phi = 2*np.pi*random()
             px = pavg*sin(theta)*cos(phi)
             py = pavg*sin(theta)*sin(phi)
             pz = pavg*cos(theta)
             self.p.append(vector(px, py, pz))
 
     def reset(self):
-        self.__init__(display=self.display)
+        self.__init__()
     
     def checkReward(self):
         cur_threshold = self.dist[self.level]
-        d2 = cur_threshold ** 2
         player_pos = self.player.pos
         pos_delta = self.target_pos - player_pos
         ret = 0
@@ -96,7 +110,7 @@ class Space(object):
     
     def checkGameOver(self):
         #check collision between obstruction and player
-        d2 = (self.Ratom + self.Ratom * 2) **2
+        d2 = (self.Ratom + self.RO) **2
         player_pos = self.player.pos
         for i in range(self.Natoms):
             pos = self.obs_pos[i]
@@ -112,7 +126,7 @@ class Space(object):
     def checkCollisions(self):
         #check collision between atoms
         hitlist = []
-        d2 = (self.Ratom * 2) ** 2
+        d2 = (self.RO * 2) ** 2
         for i in range(self.Natoms):
             posx = self.obs_pos[i]
             for j in range(i):
@@ -123,29 +137,62 @@ class Space(object):
         
         return hitlist
 
+    def get_soner_arm(self, vec, pos_soner, pos_ball):
+        vec = vec / mag(vec)
+        pos_delta = pos_ball - pos_soner
+        cos_side = dot(vec, pos_delta)
+        dist2 = mag2(pos_delta) - cos_side**2
+        if dist2 > self.RO ** 2:
+            return INF
+        arm = cos_side - np.sqrt(self.RO ** 2 - dist2)
+        return arm
+    
+    def bound_soner_arm(self, vec):
+        k = INF
+        player_pos = self.player.pos
+        arm_x = INF
+        arm_y = INF
+        arm_z = INF
+        if(vec.x != 0):
+            arm_x = np.maximum((0.5 - player_pos.x) / vec.x, (player_pos.x + 0.5) / vec.x)
+        if(vec.y != 0):
+            arm_y = np.maximum((0.5 - player_pos.y) / vec.y, (player_pos.y + 0.5)/ vec.y)
+        if(vec.z != 0):
+            arm_z = np.maximum((0.5 - player_pos.z) / vec.z, (player_pos.z + 0.5)/ vec.z)
+        k = np.min([arm_x, arm_y, arm_z])
+        return mag(vec) * np.abs(k)
+
+
     @property
     def state(self):
         ret = []
-        for i in range(self.Natoms):
-            ret += self.obs_pos[i].value
-            ret += self.p[i].value
-        ret += self.player.pos.value
-        ret += self.player.velocity.value
+        vec = []
+        for i in [-1, 0, 1]:
+            for j in [-1, 0, 1]:
+                for k in [-1, 0, 1]:
+                    if (i == 0 and j == 0 and k == 0): continue
+                    vec = vector(i, j, k)
+                    min_arm = self.bound_soner_arm(vec)
+                    for idx in range(self.Natoms):
+                        cur_arm = self.get_soner_arm(vec, self.player.pos, self.obs_pos[idx])
+                        if (min_arm > cur_arm):
+                            min_arm = cur_arm
+                    ret.append(min_arm)
         return ret
-    
+
     @property
-    def observation_size(self):
-        return 3 * (2 * self.Natoms + 2)
+    def N_STATES(self):
+        return len(self.state)
 
     def step(self, dt, action):
-        rate(500)
+        #rate(500)
         # check gameover
         self.gameOver = self.gameOver or self.checkGameOver()
         if (self.gameOver): return -1000, True
         mass = 1
 
-        action = action / np.sqrt(mag2(action))
-        self.player.velocity = np.sqrt(mag2(self.player.velocity)) * action
+        direction = self.action_dict[action]
+        self.player.velocity = mag(self.player.velocity) * direction
 
         #update all positions
         for i in range(self.Natoms): self.obstructions[i].pos = self.obs_pos[i] = self.obs_pos[i] + (self.p[i]/mass)*dt
@@ -205,21 +252,4 @@ class Space(object):
 
         return state, reward, self.gameOver
 
-if __name__ == "__main__":
-    space = Space(display=True)
-    dt = 1e-3
-    T = 10
-    t = 0
-    while(True):
-        if (space.gameOver or t >= T):
-            space.reset()
-            print("\ngame over\n")
-            os.system("pause")
-            t = 0
-        while t < T:
-            state, reward, gameOver = space.step(dt, vector(-1, -1, -1))
-            print(len(state), space.observation_size)
-            t += dt
 
-
-#%%

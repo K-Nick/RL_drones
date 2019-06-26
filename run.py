@@ -1,9 +1,11 @@
 from RL_Brain import *
 from env import Space
 
+space = Space()
 dqn = DQN()
-N_ACTIONS = 27
-N_STATES = 
+N_ACTIONS = space.N_ACTIONS
+N_STATES = space.N_STATES
+dt = 1e-2
 
 print('\nCollecting experience...')
 for i_episode in range(400):
@@ -14,13 +16,7 @@ for i_episode in range(400):
         a = dqn.choose_action(s)
 
         # take action
-        s_, r, done = env.step(a)
-
-        # modify the reward
-        x, x_dot, theta, theta_dot = s_
-        r1 = (env.x_threshold - abs(x)) / env.x_threshold - 0.8
-        r2 = (env.theta_threshold_radians - abs(theta)) / env.theta_threshold_radians - 0.5
-        r = r1 + r2
+        s_, r, done = space.step(dt, a)
 
         dqn.store_transition(s, a, r, s_)
 
